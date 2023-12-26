@@ -1,0 +1,3 @@
+Doctor: What seems to be the problem?
+Patient: I've had a headache and a mild fever since yesterday.
+Doctor: Please take some rest and drink plenty of fluids. If it doesn't improve, visit our clinic.
