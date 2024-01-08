@@ -1,8 +1,8 @@
 import torch
 from torch.utils.data import TensorDataset, DataLoader
 from torch import nn, optim
-from model import BERTClassifier, move_model_to_gpu
-from utils import load_transcripts_and_labels, preprocess_data, preprocess_transcripts, create_label_mapping
+from model import CamembertClassifier, FlaubertClassifier
+from utils import load_transcripts_and_labels, preprocess_data, preprocess_labels, preprocess_transcripts, create_label_mapping, move_model_to_gpu
 from sklearn.model_selection import train_test_split
 from torch.utils.tensorboard import SummaryWriter
 from sklearn.utils.class_weight import compute_class_weight
@@ -10,6 +10,7 @@ from sklearn.metrics import precision_score, recall_score, f1_score
 import numpy as np
 import pandas as pd
 from pathlib import Path
+from functools import partial
 
 def create_dataloader(input_ids, attention_masks, labels, batch_size=16):
     dataset = TensorDataset(input_ids, attention_masks, labels)
@@ -79,13 +80,15 @@ def evaluate(model, dataloader, criterion, device, writer, epoch, phase):
     # Return metrics along with predictions and labels for further analysis
     return avg_loss, avg_accuracy, precision, recall, f1, all_labels, all_preds
 
-
-
-def run_experiment(model, train_loader, validation_loader, num_epochs, lr, device, writer, train_labels):
+def run_experiment(model, train_loader, validation_loader, num_epochs, lr, device, writer, train_labels, use_class_weights):
     optimizer = optim.Adam(model.parameters(), lr=lr)
-    class_weights = calculate_class_weights(train_labels)
-    class_weights = class_weights.to(device)
-    criterion = nn.CrossEntropyLoss(weight=class_weights)
+
+    if use_class_weights:
+        class_weights = calculate_class_weights(train_labels)
+        class_weights = class_weights.to(device)
+        criterion = nn.CrossEntropyLoss(weight=class_weights)
+    else:
+        criterion = nn.CrossEntropyLoss()
     
     for epoch in range(num_epochs):
         train(model, train_loader, optimizer, criterion, device, writer, epoch)
@@ -96,10 +99,10 @@ def save_dataset(df, file_name):
     df.to_csv(file_name, index=False)
 
 
-def main():
-    num_epochs = 1
-    lr = 2e-5
-    labels_file = Path("./sampled_data.csv")
+def main(model_name='camembert', num_epochs=10, lr=2e-5, loss=nn.CrossEntropyLoss(), use_class_weights=True):
+
+    labels_file = Path("./sampled_data_low.csv")
+
     base_output_path = Path(f'outputs/{labels_file.stem}')
     base_runs_path = Path(f'runs/{labels_file.stem}')
 
@@ -108,9 +111,9 @@ def main():
     while (base_output_path / f"exp_{exp_number}").exists() or (base_runs_path / f"exp_{exp_number}").exists():
         exp_number += 1
 
-    # Create specific paths for this experiment
-    output_path = base_output_path / f"exp_{exp_number}"
-    runs_path = base_runs_path / f"exp_{exp_number}"
+    exp_description = f"{model_name}_lr{lr}_epochs{num_epochs}_loss{loss.__class__.__name__}_use_class_weights{use_class_weights}"
+    output_path = base_output_path / f"exp_{exp_number}_{exp_description}"
+    runs_path = base_runs_path / f"exp_{exp_number}_{exp_description}"
 
     writer = SummaryWriter(str(runs_path))
     train_dataset_path = Path(f'datasets/{labels_file.stem}/train_dataset.csv')
@@ -143,19 +146,29 @@ def main():
         validation_df = pd.read_csv(validation_dataset_path, encoding='utf-8')
         test_df = pd.read_csv(test_dataset_path, encoding='utf-8')
 
+    # Preprocess labels
+    train_labels = preprocess_labels(train_df['labels'])
+    validation_labels = preprocess_labels(validation_df['labels'])
+    test_labels = preprocess_labels(test_df['labels'])
+
+        # Instantiate the model
+    if model_name == 'camembert':
+        model = CamembertClassifier(num_classes=len(torch.unique(train_labels.clone().detach())))
+    elif model_name == 'flaubert':
+        model = FlaubertClassifier(num_classes=len(torch.unique(train_labels.clone().detach())))
+
+    model, device = move_model_to_gpu(model)
+
     # Process and create DataLoaders for the model
-    train_inputs, train_masks, train_labels = preprocess_data(train_df['transcripts'], train_df['labels'])
-    validation_inputs, validation_masks, validation_labels = preprocess_data(validation_df['transcripts'], validation_df['labels'])
-    test_inputs, test_masks, test_labels = preprocess_data(test_df['transcripts'], test_df['labels'])
+    train_inputs, train_masks = preprocess_data(model, train_df['transcripts'])
+    validation_inputs, validation_masks = preprocess_data(model, validation_df['transcripts'])
+    test_inputs, test_masks = preprocess_data(model, test_df['transcripts'])
 
     train_loader = create_dataloader(train_inputs, train_masks, train_labels)
     validation_loader = create_dataloader(validation_inputs, validation_masks, validation_labels)
     test_loader = create_dataloader(test_inputs, test_masks, test_labels)
 
-    model = BERTClassifier(num_classes=len(torch.unique(train_labels.clone().detach())))
-    model, device = move_model_to_gpu(model)
-
-    run_experiment(model, train_loader, validation_loader, num_epochs, lr, device, writer, train_labels)
+    run_experiment(model, train_loader, validation_loader, num_epochs, lr, device, writer, train_labels, use_class_weights)
 
     output_path.mkdir(parents=True, exist_ok=True)
 
@@ -164,10 +177,21 @@ def main():
 
     # Evaluate the model on the test set
     print("Evaluating on test set")
-    *_, true_labels, predictions = evaluate(model, test_loader, nn.CrossEntropyLoss(), device, writer, -1, 'Test')
+    *_, true_labels, predictions = evaluate(model, test_loader, loss, device, writer, -1, 'Test')
 
     # Save predictions and true labels
     torch.save({'predictions': predictions, 'true_labels': true_labels}, output_path / 'model_predictions.pt')
 
 if __name__ == '__main__':
-    main()
+    # Define experiment configurations
+    experiment_configs = [
+        {'model_name': 'camembert', 'num_epochs': 10, 'lr': 2e-5, 'loss': nn.CrossEntropyLoss(), 'use_class_weights': True},
+        {'model_name': 'camembert', 'num_epochs': 10, 'lr': 2e-5, 'loss': nn.CrossEntropyLoss(), 'use_class_weights': False},
+        {'model_name': 'flaubert', 'num_epochs': 10, 'lr': 2e-5, 'loss': nn.CrossEntropyLoss(), 'use_class_weights': True},
+        {'model_name': 'flaubert', 'num_epochs': 10, 'lr': 2e-5, 'loss': nn.CrossEntropyLoss(), 'use_class_weights': False},
+    ]
+
+    # Run experiments for each configuration
+    for config in experiment_configs:
+        print(f"Running experiment with config: {config}")
+        main(**config)

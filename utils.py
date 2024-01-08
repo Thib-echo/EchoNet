@@ -1,10 +1,13 @@
 import pandas as pd
-from pathlib import Path
 from sklearn.preprocessing import LabelEncoder
 from transformers import CamembertTokenizer
 import re
-import string
 import torch
+
+def move_model_to_gpu(model):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model.to(device)
+    return model, device
 
 def load_transcripts_and_labels(labels_file):
     labels_df = pd.read_csv(labels_file, encoding='utf-8')
@@ -12,21 +15,14 @@ def load_transcripts_and_labels(labels_file):
     labels = labels_df['Devenir'].tolist()
     return transcripts, labels
 
-def preprocess_data(transcripts, labels):
-    tokenizer = CamembertTokenizer.from_pretrained('camembert-base')
-    encoded_data = tokenizer.batch_encode_plus(
-        transcripts,
-        add_special_tokens=True,
-        return_attention_mask=True,
-        padding='max_length',
-        truncation=True,
-        max_length=512,
-        return_tensors='pt'
-    )
-
+def preprocess_labels(labels):
     label_encoder = LabelEncoder()
     encoded_labels = label_encoder.fit_transform(labels)
-    return encoded_data['input_ids'], encoded_data['attention_mask'], torch.tensor(encoded_labels)
+    return torch.tensor(encoded_labels)
+
+def preprocess_data(model, transcripts):
+    input_ids, attention_masks = model.tokenize(transcripts)
+    return input_ids, attention_masks
 
 def clean_text(text):
     text = text.lower()
