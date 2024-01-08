@@ -1,28 +1,19 @@
 import pandas as pd
 from pathlib import Path
 from sklearn.preprocessing import LabelEncoder
-from transformers import BertTokenizer
+from transformers import CamembertTokenizer
 import re
 import string
 import torch
 
-def load_transcripts_and_labels(data_dir, labels_file):
-    data_dir = Path(data_dir)
-    labels_df = pd.read_csv(labels_file)
-    transcripts = []
-    labels = []
-
-    for row in labels_df.itertuples():
-        transcript_file = data_dir / row.file_name / (row.file_name + '.txt')
-        with open(transcript_file, 'r', encoding='utf-8') as file:
-            transcript = file.read()
-            transcripts.append(transcript)
-            labels.append(row.urgency_level)
-
+def load_transcripts_and_labels(labels_file):
+    labels_df = pd.read_csv(labels_file, encoding='utf-8')
+    transcripts = labels_df['transcript'].tolist()
+    labels = labels_df['Devenir'].tolist()
     return transcripts, labels
 
 def preprocess_data(transcripts, labels):
-    tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+    tokenizer = CamembertTokenizer.from_pretrained('camembert-base')
     encoded_data = tokenizer.batch_encode_plus(
         transcripts,
         add_special_tokens=True,
@@ -38,9 +29,9 @@ def preprocess_data(transcripts, labels):
     return encoded_data['input_ids'], encoded_data['attention_mask'], torch.tensor(encoded_labels)
 
 def clean_text(text):
-    text = text.lower()  # Lowercasing
-    text = re.sub(f'[{string.punctuation}]', '', text)  # Remove punctuation
-    text = re.sub(r'\s+', ' ', text)  # Replace multiple spaces with single space
+    text = text.lower()
+    text = re.sub(r"[^a-zA-ZéèêëîïôœûüçàáâäæçÉÈÊËÎÏÔŒÛÜÇÀÁÂÄÆ0-9]", " ", text)
+    text = re.sub(r'\s+', ' ', text).strip()
     return text
 
 def preprocess_transcripts(transcripts):
