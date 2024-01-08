@@ -1,3 +1,0 @@
-Doctor: Hello, how can I help you today?
-Patient: I'm feeling very unwell, I have severe chest pain and difficulty breathing.
-Doctor: I'm sending an ambulance right away.

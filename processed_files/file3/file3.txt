@@ -1,3 +1,0 @@
-Doctor: How are you feeling today?
-Patient: I'm doing okay, just a little tired.
-Doctor: That's normal. Ensure you're getting enough sleep.
